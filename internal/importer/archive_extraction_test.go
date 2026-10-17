@@ -62,6 +62,24 @@ func TestArchiveAwaitingExtraction(t *testing.T) {
 		t.Errorf("extracted folder: got %q, want none", got)
 	}
 
+	// A small notes file is not the extracted book (#3232): the archive still
+	// waits, until an ebook of plausible size appears.
+	notes := t.TempDir()
+	for name, size := range map[string]int{"Fjellvinden.rar": 10, "www.site.txt": 253} {
+		if err := os.WriteFile(filepath.Join(notes, name), make([]byte, size), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := archiveAwaitingExtraction(notes); filepath.Base(got) != "Fjellvinden.rar" {
+		t.Errorf("archive beside a notes .txt: got %q, want Fjellvinden.rar", got)
+	}
+	if err := os.WriteFile(filepath.Join(notes, "Fjellvinden.epub"), make([]byte, MinPlausibleEbookBytes), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := archiveAwaitingExtraction(notes); got != "" {
+		t.Errorf("archive beside an extracted ebook: got %q, want none", got)
+	}
+
 	// The RAR 4 naming: the first volume is x.rar, although x.r00 sorts first.
 	old := filepath.Join(t.TempDir(), "Havgapet")
 	if err := os.MkdirAll(old, 0o750); err != nil {
