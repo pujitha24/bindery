@@ -287,7 +287,7 @@ func newTrailingRules(title string, bc bookContext, wanted ...[]string) *trailin
 		if isSetTitle(cleaned) {
 			continue
 		}
-		for _, v := range []string{cleaned, primaryTitle(cleaned), newznab.SeriesPositionTitle(cleaned)} {
+		for _, v := range []string{cleaned, primaryTitle(cleaned), newznab.SeriesPositionTitle(cleaned), hashPositionTitle(cleaned)} {
 			ident := titleIdentityKeywords(v)
 			if len(ident) < 2 {
 				continue
@@ -321,6 +321,22 @@ func newTrailingRules(title string, bc bookContext, wanted ...[]string) *trailin
 		}
 	}
 	return tr
+}
+
+// hashPositionRe matches a catalogue title that leads with a series label and a
+// hashed position joined to the real title by a dash: "Rotten School #12 -
+// Battle of the Dum Diddys". The "#" is required, so an ordinary "Title - Subtitle"
+// or "Title 2 - Subtitle" is never split.
+var hashPositionRe = regexp.MustCompile(`^\S.*?\s#\d{1,3}\s+-\s+(\S.*)$`)
+
+// hashPositionTitle returns the title after a "Series #N - " prefix, or "" when
+// title has no such prefix. It is the dash counterpart of
+// newznab.SeriesPositionTitle, which only reads the colon form.
+func hashPositionTitle(title string) string {
+	if m := hashPositionRe.FindStringSubmatch(title); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 func isASCII(s string) bool {

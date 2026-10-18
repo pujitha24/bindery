@@ -107,6 +107,13 @@ func TestTrailingTitleRejectsAnotherBook(t *testing.T) {
 			reason:  reasonAnotherTitle,
 		},
 		{
+			name:  "Rotten School 12, library title with series prefix and hash position",
+			title: "Rotten School", author: "R. L. Stine",
+			release: "R L Stine - [Rotten School 12] - Battle of the Dum Diddys (retail) (epub)",
+			bc:      bookContext{otherTitles: []string{"Rotten School #12 - Battle of the Dum Diddys"}},
+			reason:  reasonAnotherTitle,
+		},
+		{
 			name:  "Rotten School 12, position known",
 			title: "Rotten School", author: "R. L. Stine",
 			release: "R L Stine - [Rotten School 12] - Battle of the Dum Diddys (retail) (epub) (epub)",
