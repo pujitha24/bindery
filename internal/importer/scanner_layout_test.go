@@ -504,3 +504,16 @@ func TestScanLibrary_BackwardsFilenameWithNoBookIsNotMatchedOnTheAuthorsName(t *
 		}
 	})
 }
+
+// TestScanLibrary_BackwardsFilenameUnmatchedEntryNamesTheRealTitle: a backwards
+// "Author - Title" file the catalogue has no book for is listed as unmatched
+// under its title, not under the author's name read as a title.
+func TestScanLibrary_BackwardsFilenameUnmatchedEntryNamesTheRealTitle(t *testing.T) {
+	s, _, books, authors, _, libraryDir, ctx := unmatchedFixture(t)
+	seedAuthorBooks(t, books, authors, ctx, "Stephen King", "Stephen King 8", "The Stand")
+
+	got := scanOneUnmatched(t, s, ctx, libraryDir, "Stephen King", "Carrie", "Stephen King - Carrie.epub")
+	if got.ParsedTitle != "Carrie" {
+		t.Errorf("unmatched title = %q, want %q", got.ParsedTitle, "Carrie")
+	}
+}
