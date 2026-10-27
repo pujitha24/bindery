@@ -84,6 +84,8 @@ export interface BookConflictBody {
   error?: string
   existingBookId?: number
   existingBook?: Book
+  // The request widened the existing row to both formats (#3482).
+  formatWidened?: boolean
 }
 
 export interface SearchResult {

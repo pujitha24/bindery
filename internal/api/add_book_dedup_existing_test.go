@@ -98,3 +98,91 @@ func TestAddBook_DedupedOntoExistingRowAnswersWithThatRow(t *testing.T) {
 		t.Fatalf("dedup must not create a second row, got %d", len(books))
 	}
 }
+
+// TestAddBook_DedupWideningFormatFlagsTheConflict covers #3482: a request for
+// the other format dedups onto the existing row, widens it to both, and the 409
+// must say so. A same-format request changes nothing and must not claim it did.
+func TestAddBook_DedupWideningFormatFlagsTheConflict(t *testing.T) {
+	cases := []struct {
+		name         string
+		existingType string
+		requestType  string
+		wantWidened  bool
+		wantStored   string
+	}{
+		{"ebook then audiobook", models.MediaTypeEbook, models.MediaTypeAudiobook, true, models.MediaTypeBoth},
+		{"audiobook then ebook", models.MediaTypeAudiobook, models.MediaTypeEbook, true, models.MediaTypeBoth},
+		{"same format", models.MediaTypeEbook, models.MediaTypeEbook, false, models.MediaTypeEbook},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			database, err := db.OpenMemory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			database.SetMaxOpenConns(1)
+
+			ctx := context.Background()
+			authorRepo := db.NewAuthorRepo(database)
+			bookRepo := db.NewBookRepo(database)
+			profileRepo := db.NewMetadataProfileRepo(database)
+
+			author := &models.Author{
+				ForeignID: "OL6941868A", Name: "Ernest Cline", SortName: "Cline, Ernest",
+				MetadataProvider: "openlibrary", Monitored: true,
+			}
+			if err := authorRepo.Create(ctx, author); err != nil {
+				t.Fatal(err)
+			}
+			existing := &models.Book{
+				ForeignID: "OL19331965W", AuthorID: author.ID, Title: "Ready Player One (Movie Tie-In)",
+				SortTitle: "Ready Player One (Movie Tie-In)", Status: models.BookStatusWanted,
+				Genres: []string{}, MetadataProvider: "openlibrary", MediaType: tc.existingType,
+				Monitored: true,
+			}
+			if err := bookRepo.Create(ctx, existing); err != nil {
+				t.Fatal(err)
+			}
+			requested := &models.Book{
+				ForeignID: "OL15936512W", Title: "Ready Player One", SortTitle: "Ready Player One",
+				Status: models.BookStatusWanted, Genres: []string{}, MetadataProvider: "openlibrary",
+				MediaType: tc.requestType,
+			}
+			stub := &stubMetaProvider{
+				name:        "openlibrary",
+				getBookByID: map[string]*models.Book{"OL15936512W": requested},
+			}
+			h := NewAuthorHandler(authorRepo, nil, bookRepo, nil, metadata.NewAggregator(stub), nil, profileRepo, nil)
+
+			body, _ := json.Marshal(map[string]any{
+				"foreignBookId":   "OL15936512W",
+				"foreignAuthorId": "OL6941868A",
+				"authorName":      "Ernest Cline",
+				"mediaType":       tc.requestType,
+			})
+			rec := httptest.NewRecorder()
+			h.AddBook(rec, httptest.NewRequest(http.MethodPost, "/api/v1/author/book", bytes.NewReader(body)))
+
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+			}
+			var resp struct {
+				FormatWidened bool `json:"formatWidened"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp.FormatWidened != tc.wantWidened {
+				t.Fatalf("formatWidened = %v, want %v: %s", resp.FormatWidened, tc.wantWidened, rec.Body.String())
+			}
+			got, err := bookRepo.GetByID(ctx, existing.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.MediaType != tc.wantStored {
+				t.Fatalf("stored media type = %q, want %q", got.MediaType, tc.wantStored)
+			}
+		})
+	}
+}

@@ -94,6 +94,9 @@ var addBookErrorResponses = []struct {
 // (#1227). Book is the existing row, which the handler returns in the 409.
 type bookInLibraryError struct {
 	Book *models.Book
+	// FormatWidened is set when this request changed the row's media type to
+	// both before answering, so the client can say so (#3482).
+	FormatWidened bool
 }
 
 func (e *bookInLibraryError) Error() string { return "add book: book already in library" }
@@ -124,7 +127,7 @@ func (e *addBookLookupError) Unwrap() error { return e.Err }
 func (h *AuthorHandler) writeAddBookError(w http.ResponseWriter, r *http.Request, err error) {
 	var inLibrary *bookInLibraryError
 	if errors.As(err, &inLibrary) {
-		h.writeExistingBookConflict(w, inLibrary.Book)
+		h.writeExistingBookConflict(w, inLibrary.Book, inLibrary.FormatWidened)
 		return
 	}
 	var unavailable *primaryProviderUnavailableError
@@ -389,6 +392,7 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 	// dedupedOnto is the existing row the direct insert below merged the
 	// request into without that row taking the requested foreign id (#3466).
 	var dedupedOnto *models.Book
+	dedupedWidened := false
 
 	// 1b. Direct insert for the requested book.
 	//
@@ -479,7 +483,7 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 			// distinct volume of the matched row's series (same series, different
 			// sequence), skip the adopt and create a distinct row instead.
 			if ferr == nil && match != nil && !h.directInsertSeriesConflict(ctx, match.ID, primary.SeriesRefs) {
-				h.adoptDirectInsertMatch(ctx, match, primary, req.ForeignBookID)
+				dedupedWidened = h.adoptDirectInsertMatch(ctx, match, primary, req.ForeignBookID)
 				if match.ForeignID != req.ForeignBookID {
 					dedupedOnto = match
 				}
@@ -512,7 +516,7 @@ func (h *AuthorHandler) addBookCore(ctx context.Context, req addBookParams) (add
 	// the request was merged into, the same as re-adding a known id (#1227).
 	if dedupedOnto != nil {
 		if existing, _ := h.books.GetByForeignID(ctx, req.ForeignBookID); existing == nil {
-			return addBookResult{}, &bookInLibraryError{Book: dedupedOnto}
+			return addBookResult{}, &bookInLibraryError{Book: dedupedOnto, FormatWidened: dedupedWidened}
 		}
 	}
 

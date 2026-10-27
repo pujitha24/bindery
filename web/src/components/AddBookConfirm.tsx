@@ -102,7 +102,9 @@ function AddBookForm({ book, searchedISBN, onBack, onClose, onAdded }: Props) {
       if (conflict) {
         // Always the translated string: the server's message is English, and
         // every 409 that carries existingBookId says the same thing.
-        setAddError(t('addToLibrary.book.alreadyInLibrary'))
+        setAddError(conflict.formatWidened
+          ? t('addToLibrary.book.formatWidened')
+          : t('addToLibrary.book.alreadyInLibrary'))
       } else {
         setAddError(err instanceof Error ? err.message : t('addToLibrary.book.addFailed'))
       }

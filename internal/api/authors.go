@@ -868,12 +868,19 @@ func (h *AuthorHandler) writeCanonicalAuthorConflict(w http.ResponseWriter, cano
 // writeExistingBookConflict is the AddBook counterpart of
 // writeCanonicalAuthorConflict (#1227): 409 with the library row so the client
 // can offer to open it instead of showing a generic failure.
-func (h *AuthorHandler) writeExistingBookConflict(w http.ResponseWriter, existing *models.Book) {
-	writeJSON(w, http.StatusConflict, map[string]any{
+//
+// formatWidened marks that the request itself changed the row to both formats
+// (#3482), so the client does not call it untouched.
+func (h *AuthorHandler) writeExistingBookConflict(w http.ResponseWriter, existing *models.Book, formatWidened bool) {
+	body := map[string]any{
 		"error":          "book already in your library; change its format or monitoring from the book page",
 		"existingBookId": existing.ID,
 		"existingBook":   proxiedBook(existing),
-	})
+	}
+	if formatWidened {
+		body["formatWidened"] = true
+	}
+	writeJSON(w, http.StatusConflict, body)
 }
 
 func (h *AuthorHandler) findCanonicalAuthorMatch(ctx context.Context, names ...string) (*models.Author, bool, error) {
@@ -3772,8 +3779,10 @@ func seriesSequencesEqual(a, b string) bool {
 // requested foreign id instead of inserting a duplicate, mirroring the
 // catalogue sync's dedup arms: a Calibre stub is upgraded to the real
 // provider id so the caller's poll finds it, and an ebook/audiobook pair
-// collapses into one dual-format row.
-func (h *AuthorHandler) adoptDirectInsertMatch(ctx context.Context, match, primary *models.Book, foreignID string) {
+// collapses into one dual-format row. It reports whether the row's media type
+// was widened to both and saved.
+func (h *AuthorHandler) adoptDirectInsertMatch(ctx context.Context, match, primary *models.Book, foreignID string) bool {
+	widened := false
 	changed := false
 	if strings.HasPrefix(match.ForeignID, "calibre:") {
 		match.ForeignID = foreignID
@@ -3782,6 +3791,7 @@ func (h *AuthorHandler) adoptDirectInsertMatch(ctx context.Context, match, prima
 	if canUpgradeToBoth(match.MediaType, primary.MediaType) {
 		match.MediaType = models.MediaTypeBoth
 		changed = true
+		widened = true
 	}
 	if match.Language == "" && primary.Language != "" {
 		match.Language = primary.Language
@@ -3790,16 +3800,17 @@ func (h *AuthorHandler) adoptDirectInsertMatch(ctx context.Context, match, prima
 	if !changed {
 		slog.Debug("AddBook: direct insert deduped against existing row",
 			"foreignBookId", foreignID, "bookId", match.ID, "title", match.Title)
-		return
+		return false
 	}
 	if err := h.books.Update(ctx, match); err != nil {
 		slog.Warn("AddBook: failed to adopt existing row during direct insert",
 			"foreignBookId", foreignID, "bookId", match.ID, "error", err)
-		return
+		return false
 	}
 	// The matched row is already in the library, so its format belongs to the
 	// user and hydration must not widen it (#2768).
 	h.hydrateHardcoverEditions(ctx, match, nil, true)
+	return widened
 }
 
 func canUpgradeToBoth(existingMediaType, incomingMediaType string) bool {
