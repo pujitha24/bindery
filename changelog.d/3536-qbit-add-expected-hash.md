@@ -1,0 +1,2 @@
+### Fixed
+- **A qBittorrent grab no longer adopts another writer's torrent** (#3536) - when the add response carries no hash and the grab is a `.torrent` file, Bindery now requires the torrent whose v1 infohash matches the file it submitted (v2-only torrents keep the old behaviour), instead of taking the newest new row. A cross-seed or manual add landing in the same second can no longer be recategorised and followed as the book. If the torrent list can't be read before the add and the payload has no infohash, the grab fails instead of guessing.

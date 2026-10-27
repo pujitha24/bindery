@@ -349,7 +349,11 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	// (#418). The before/after hash-set diff already uniquely identifies the
 	// new torrent, so the category filter is omitted from both polling calls.
 	beforeSet := map[string]struct{}{}
-	if before, err := c.GetTorrents(ctx, ""); err == nil {
+	beforeOK := false
+	if before, err := c.GetTorrents(ctx, ""); err != nil {
+		slog.Warn("add torrent: could not snapshot the torrent list before the add", "error", err)
+	} else {
+		beforeOK = true
 		for _, t := range before {
 			beforeSet[strings.ToLower(t.Hash)] = struct{}{}
 		}
@@ -517,6 +521,21 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	// take a few seconds for remote URLs (e.g. Prowlarr Torznab redirects).
 	// We poll unfiltered so we find the torrent regardless of which category
 	// qBittorrent has assigned at the moment it first appears.
+	//
+	// AddedOn has one-second resolution, so a torrent added by another writer
+	// (cross-seed, a manual add) in the same second can tie with ours. When the
+	// payload is a .torrent file its infohash is known, so require it exactly.
+	expectedHash := infoHashFromTorrentFile(torrentFile)
+	if !bytes.Contains(torrentFile, []byte("6:pieces")) {
+		// A v2-only torrent has no v1 "pieces"; qBittorrent lists it under the
+		// truncated SHA-256 id, which the SHA-1 above can never match.
+		expectedHash = ""
+	}
+	if !beforeOK && expectedHash == "" {
+		// Without a before-snapshot every torrent is a candidate, and without an
+		// expected hash there is nothing to filter them by.
+		return "", fmt.Errorf("add torrent accepted but the torrent list could not be read before the add and this payload carries no infohash, so the added torrent cannot be identified")
+	}
 	deadline := time.Now().Add(hashPollTimeout)
 	var lastAfter []Torrent
 	for {
@@ -530,6 +549,10 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 			t := &after[i]
 			h := strings.ToLower(t.Hash)
 			if _, seen := beforeSet[h]; seen {
+				continue
+			}
+			if expectedHash != "" && h != expectedHash {
+				// Added by another writer while this grab was in flight.
 				continue
 			}
 			if newest == nil || t.AddedOn > newest.AddedOn {
@@ -574,9 +597,13 @@ func (c *Client) AddTorrent(ctx context.Context, magnetOrURL, category, savePath
 	}
 	slog.Error("add torrent hash lookup timed out",
 		"category", category,
+		"expected_hash", expectedHash,
 		"before_hashes", beforeKeys,
 		"after_hashes", afterKeys,
 	)
+	if expectedHash != "" {
+		return "", fmt.Errorf("add torrent accepted but %s never appeared in the torrent list", expectedHash)
+	}
 	return "", fmt.Errorf("add torrent accepted but hash could not be determined")
 }
 
