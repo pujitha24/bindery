@@ -1,0 +1,2 @@
+### Fixed
+- **A library scan no longer matches a co-authored `Author, Author - Title` file on the author's name** (#3494). `Stephen King, Peter Straub - The Talisman.epub` in the Stephen King folder is now read as author-then-title like a single-author name, so it is not linked to a catalogue row named after the author ("Stephen King 8"). A variant spelling of the author (Dostoyevsky / Dostoevsky) is not covered yet.

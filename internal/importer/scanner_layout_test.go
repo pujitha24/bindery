@@ -257,6 +257,9 @@ func TestFlipByLayout(t *testing.T) {
 		{"no filename author", "Evil Thirst", "", "Christopher Pike", false, "", ""},
 		{"title is not the folder author", "Christine", "Stephen King", "Christopher Pike", false, "", ""},
 		{"book folder offers a flip the catalogue must refuse", "It", "Stephen King", "It", true, "Stephen King", "It"},
+		{"co-author list under one author's folder", "Stephen King, Peter Straub", "The Talisman", "Stephen King", true, "The Talisman", "Stephen King"},
+		{"co-author list with ampersand", "Peter Straub & Stephen King", "The Talisman", "Stephen King", true, "The Talisman", "Stephen King"},
+		{"co-author list without the folder author", "Peter Straub, Neil Gaiman", "The Talisman", "Stephen King", false, "", ""},
 		{"ambiguous name match never flips", "Stanley Paul", "Face the Music", "Paul Stanley", false, "", ""},
 	}
 	for _, c := range cases {
@@ -515,5 +518,23 @@ func TestScanLibrary_BackwardsFilenameUnmatchedEntryNamesTheRealTitle(t *testing
 	got := scanOneUnmatched(t, s, ctx, libraryDir, "Stephen King", "Carrie", "Stephen King - Carrie.epub")
 	if got.ParsedTitle != "Carrie" {
 		t.Errorf("unmatched title = %q, want %q", got.ParsedTitle, "Carrie")
+	}
+}
+
+// TestScanLibrary_CoAuthoredBackwardsFilenameIsNotMatchedOnTheAuthorsName: the
+// co-author list of "Stephen King, Peter Straub - The Talisman.epub" still names
+// the folder's author, so the flip is tried and, finding no book, the file is
+// not linked to "Stephen King 8".
+func TestScanLibrary_CoAuthoredBackwardsFilenameIsNotMatchedOnTheAuthorsName(t *testing.T) {
+	libDir := t.TempDir()
+	s, books, authors, ctx := scannerFixture(t, libDir)
+	seeded := seedAuthorBooks(t, books, authors, ctx, "Stephen King", "Stephen King 8", "Carrie")
+	p := filepath.Join(libDir, "Stephen King", "The Talisman", "Stephen King, Peter Straub - The Talisman.epub")
+	writeFileAt(t, p)
+
+	s.ScanLibrary(ctx)
+
+	if got := fileOwners(t, books, ctx, seeded, p); len(got) != 0 {
+		t.Errorf("file went to %q, want no book", got)
 	}
 }

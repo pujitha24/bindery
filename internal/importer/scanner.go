@@ -3486,11 +3486,34 @@ func flipByLayout(parsed ParsedFile, layoutAuthor string) (ParsedFile, bool) {
 	if layoutAuthor == "" || parsed.Title == "" || parsed.Author == "" {
 		return parsed, false
 	}
-	if !confidentAuthorMatch(parsed.Title, layoutAuthor) || confidentAuthorMatch(parsed.Author, layoutAuthor) {
+	if !namesAuthor(parsed.Title, layoutAuthor) || confidentAuthorMatch(parsed.Author, layoutAuthor) {
 		return parsed, false
 	}
 	parsed.Title, parsed.Author = parsed.Author, layoutAuthor
 	return parsed, true
+}
+
+// multiAuthorSep splits a co-author credit ("Stephen King, Peter Straub",
+// "Good Omens & Terry Pratchett") into its names.
+var multiAuthorSep = regexp.MustCompile(`(?i)\s*(?:,|;|&|\+|\band\b)\s*`)
+
+// namesAuthor reports whether name is layoutAuthor, or a co-author list that
+// includes them. Each part still has to be a confidentAuthorMatch. The whole
+// name is tried first, so "Pike, Christopher" still reads as an inverted name.
+func namesAuthor(name, layoutAuthor string) bool {
+	if confidentAuthorMatch(name, layoutAuthor) {
+		return true
+	}
+	parts := multiAuthorSep.Split(name, -1)
+	if len(parts) < 2 {
+		return false
+	}
+	for _, part := range parts {
+		if part != "" && confidentAuthorMatch(part, layoutAuthor) {
+			return true
+		}
+	}
+	return false
 }
 
 // ErrScanAlreadyRunning was StartScan's answer to a request made while a
