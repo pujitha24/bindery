@@ -70,6 +70,9 @@ func isPartBookTitle(title string) bool {
 var syncEnrichmentsPerHour = 100
 
 type AuthorHandler struct {
+	// afterProviderFieldsRead is a test seam: it runs between refreshProviderFields
+	// re-reading a row and writing it, where a concurrent edit would land (#3105).
+	afterProviderFieldsRead func()
 	// syncEnrich counts the enrichments those syncs spent in the current
 	// hour; see takeSyncEnrichment.
 	syncEnrichMu     sync.Mutex
@@ -1910,6 +1913,58 @@ func (h *AuthorHandler) writeTitleMatch(ctx context.Context, existing *models.Bo
 	return false, nil
 }
 
+// refreshProviderFields lets an id-resolved book take the release date and,
+// if it has none, the description the current provider record carries (#3105;
+// the per-field rules are on Book.AdoptRefreshedProviderFields).
+//
+// It acts only when the record's own id is the row's id. A row that matched
+// through a secondary id or a title may be a different work with the same name
+// (two OpenLibrary works can share a title), and adopting that work's date
+// would make the row alternate between them on every refresh.
+//
+// A field with an Audiobookshelf conflict recorded is skipped: the user's
+// per-field source choice there is not something a refresh may override. The
+// row is re-read and the write guarded on that read, so an edit made in between
+// wins and the next sync makes the change again. An excluded or vanished row is
+// left alone. A refresh that changes nothing writes nothing.
+func (h *AuthorHandler) refreshProviderFields(ctx context.Context, existing, incoming *models.Book) {
+	if existing.ForeignID != incoming.ForeignID {
+		return
+	}
+	src := *incoming
+	src.UnknownFields = slices.Clone(incoming.UnknownFields)
+	for field, conflictName := range map[string]string{
+		models.BookFieldReleaseDate: "release_date",
+		models.BookFieldDescription: "description",
+	} {
+		has, err := h.books.HasABSConflictFor(ctx, existing.ID, conflictName)
+		if err != nil || has {
+			// Unreadable counts as present: skipping is the safe answer.
+			src.UnknownFields = append(src.UnknownFields, field)
+		}
+	}
+	probe := *existing
+	if len(probe.AdoptRefreshedProviderFields(&src)) == 0 {
+		return
+	}
+	if !h.refreshTitleMatch(ctx, existing) {
+		return
+	}
+	expectedUpdatedAt := existing.UpdatedAtRaw
+	if h.afterProviderFieldsRead != nil {
+		h.afterProviderFieldsRead()
+	}
+	changed := existing.AdoptRefreshedProviderFields(&src)
+	if len(changed) == 0 {
+		return
+	}
+	if written, err := h.writeTitleMatch(ctx, existing, expectedUpdatedAt); err != nil {
+		slog.Warn("catalogue sync: could not update provider fields", "book_id", existing.ID, "error", err)
+	} else if written {
+		slog.Debug("catalogue sync: updated provider fields", "book_id", existing.ID, "fields", changed)
+	}
+}
+
 // runCatalogueSync is the catalogue sync behind fetchAuthorBooks. It returns
 // how many books the run created and, when the provider could not list the
 // author's works, that error, so scheduled discovery can tell a rate limit
@@ -2692,6 +2747,9 @@ func (h *AuthorHandler) runCatalogueSync(ctx context.Context, author *models.Aut
 					slog.Warn("authors: update during dedup", "error", err, "book_id", existing.ID)
 				}
 			}
+			// Corrections made upstream to the release date, and a description
+			// the book lacks (#3105). Never clears.
+			h.refreshProviderFields(ctx, existing, &b)
 			// Attach whatever ids this fetch knows the book by, so the next
 			// sync from either provider resolves it exactly rather than
 			// relying on a title comparison (#1705).
