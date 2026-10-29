@@ -236,7 +236,10 @@ type Scheduler struct {
 	recommender        RecommendationEngine // optional; generates recommendations
 	// operatorUserID resolves the user the recommendation job writes under.
 	// Optional; nil falls back to the historical hardcoded admin id (#1725).
-	operatorUserID       func(context.Context) int64
+	operatorUserID func(context.Context) int64
+	// allUserIDs lists every account the nightly recommendation job refreshes
+	// in addition to the operator. Optional; nil refreshes the operator only.
+	allUserIDs           func(context.Context) ([]int64, error)
 	hcSyncer             HCListSyncer    // optional; syncs Hardcover import lists
 	telemetry            TelemetryPinger // optional; sends daily anonymous install ping
 	logs                 *db.LogRepo     // optional; enables periodic log retention trim
@@ -442,6 +445,39 @@ func (s *Scheduler) WithOperatorUserID(fn func(context.Context) int64) {
 	s.operatorUserID = fn
 }
 
+// WithAllUserIDs supplies the accounts the nightly recommendation job
+// refreshes besides the operator, so every account's Discover list is
+// regenerated and not just the operator's (#3566).
+func (s *Scheduler) WithAllUserIDs(fn func(context.Context) ([]int64, error)) {
+	s.allUserIDs = fn
+}
+
+// recommendationUserIDs returns the operator first, then every other account
+// from allUserIDs, skipping the operator if it is listed again.
+func (s *Scheduler) recommendationUserIDs(ctx context.Context) []int64 {
+	op := int64(1)
+	if s.operatorUserID != nil {
+		if resolved := s.operatorUserID(ctx); resolved != 0 {
+			op = resolved
+		}
+	}
+	ids := []int64{op}
+	if s.allUserIDs == nil {
+		return ids
+	}
+	all, err := s.allUserIDs(ctx)
+	if err != nil {
+		slog.Error("recommendations: list users failed, refreshing operator only", "error", err)
+		return ids
+	}
+	for _, id := range all {
+		if id != op {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // WithHardcoverSyncer registers a Hardcover list syncer that runs every 24
 // hours to import books from the user's Hardcover reading lists.
 func (s *Scheduler) WithHardcoverSyncer(syncer HCListSyncer) {
@@ -620,14 +656,10 @@ func (s *Scheduler) Start() {
 			// meant the nightly job and a manual refresh could write under
 			// different users, so dismissals never applied (#1725).
 			ctx := s.ctx()
-			uid := int64(1)
-			if s.operatorUserID != nil {
-				if resolved := s.operatorUserID(ctx); resolved != 0 {
-					uid = resolved
+			for _, uid := range s.recommendationUserIDs(ctx) {
+				if err := s.recommender.Run(ctx, uid); err != nil {
+					slog.Error("recommendation engine failed", "userId", uid, "error", err)
 				}
-			}
-			if err := s.recommender.Run(ctx, uid); err != nil {
-				slog.Error("recommendation engine failed", "error", err)
 			}
 		}))
 	}

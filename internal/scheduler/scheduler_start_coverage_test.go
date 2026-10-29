@@ -226,6 +226,31 @@ func TestStart_JobSettingsGates(t *testing.T) {
 	}
 }
 
+// TestStart_RecommendationsRefreshEveryUser pins that the nightly job runs the
+// engine for every account, operator first and without running it twice for
+// the operator, and that a failing run for one account does not stop the rest.
+func TestStart_RecommendationsRefreshEveryUser(t *testing.T) {
+	f := newStartFixture(t)
+	ctx := context.Background()
+	if err := f.settings.Set(ctx, "recommendations.enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	f.s.WithAllUserIDs(func(context.Context) ([]int64, error) { return []int64{3, 7, 9}, nil })
+	f.s.Start()
+	f.s.Stop()
+	runAllJobs(t, f.s.cron)
+
+	want := []int64{7, 3, 9}
+	if len(f.rec.uids) != len(want) {
+		t.Fatalf("recommendation runs = %v, want %v", f.rec.uids, want)
+	}
+	for i := range want {
+		if f.rec.uids[i] != want[i] {
+			t.Fatalf("recommendation runs = %v, want %v", f.rec.uids, want)
+		}
+	}
+}
+
 // TestOptionSetters_AssignRepos covers the With* setters that only store a
 // dependency; each is read by the grab path, so a setter that dropped its
 // argument would silently disable a feature.

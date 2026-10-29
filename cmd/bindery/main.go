@@ -891,6 +891,7 @@ func main() {
 	// (#1725). Registered here rather than at WithRecommender because the
 	// provider does not exist yet at that point.
 	sched.WithOperatorUserID(authProvider.OperatorUserID)
+	sched.WithAllUserIDs(authProvider.AllUserIDs)
 
 	r.Route("/api", func(r chi.Router) {
 		useAPIAuth(r, authProvider)
@@ -1593,6 +1594,20 @@ func (p *dbAuthProvider) OperatorUserID(ctx context.Context) int64 {
 		return 0
 	}
 	return id
+}
+
+// AllUserIDs lists every account so the nightly recommendation job can refresh
+// each one's Discover list, not only the operator's (#3566).
+func (p *dbAuthProvider) AllUserIDs(ctx context.Context) ([]int64, error) {
+	users, err := p.users.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(users))
+	for _, u := range users {
+		ids = append(ids, u.ID)
+	}
+	return ids, nil
 }
 
 func (p *dbAuthProvider) UserRole(ctx context.Context, userID int64) string {
