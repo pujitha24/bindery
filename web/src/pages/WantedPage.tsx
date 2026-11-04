@@ -83,6 +83,13 @@ export default function WantedPage() {
     return () => { mounted.current = false }
   }, [])
 
+  // The post-grab reset timer; cleared on unmount so it cannot fire against
+  // an unmounted page.
+  const grabTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (grabTimer.current) clearTimeout(grabTimer.current)
+  }, [])
+
   // The query a total belongs to, minus the page. The snap back to the last
   // page may only use a total fetched for the query on screen (see BooksPage).
   const searchQuery = list.values.q
@@ -208,7 +215,9 @@ export default function WantedPage() {
       }, confirm, t)
       if (!dl) return
       setGrabbedGuid(result.guid)
-      setTimeout(() => {
+      if (grabTimer.current) clearTimeout(grabTimer.current)
+      grabTimer.current = setTimeout(() => {
+        grabTimer.current = null
         setShowResults(null)
         setGrabbedGuid(null)
         load()

@@ -519,6 +519,31 @@ describe('WantedPage', () => {
     expect(screen.getByText('No wanted books. Add an author to start tracking.')).toBeInTheDocument()
   })
 
+  it('cancels the post-grab refresh timer when the page unmounts (#3607)', async () => {
+    const book = makeBook({ id: 1, title: 'Dune' })
+    vi.mocked(api.listWantedPage).mockResolvedValue(pageOf([book]))
+    vi.mocked(api.searchBook).mockResolvedValue({
+      results: [makeResult({ guid: 'dune-release', title: 'Dune 2026 EPUB' })],
+      debug: null,
+    })
+
+    // Fake from the start so the 1200 ms timer the grab arms is the fake one.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const { unmount } = renderWantedPage()
+    await screen.findByRole('link', { name: 'Dune' })
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Grab' }))
+    expect(await screen.findByRole('button', { name: '✓ Grabbed' })).toBeInTheDocument()
+
+    const loads = vi.mocked(api.listWantedPage).mock.calls.length
+    unmount()
+    await act(async () => {
+      vi.advanceTimersByTime(1200)
+      await Promise.resolve()
+    })
+    expect(api.listWantedPage).toHaveBeenCalledTimes(loads)
+  })
+
   // #2933: a dual-format book's search classifies each result, and that, not
   // the book's 'both', is what the grab must carry.
   it('grabs an audiobook result of a dual-format book as an audiobook', async () => {
