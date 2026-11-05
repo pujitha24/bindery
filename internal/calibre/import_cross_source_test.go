@@ -71,3 +71,44 @@ func TestImporter_CrossSourceBindsByDedupKey(t *testing.T) {
 		})
 	}
 }
+
+// A Bindery book that already carries its own calibre_id is a distinct work,
+// even when its title folds to the same dedup key as an incoming Calibre book.
+// Path 3 must not bind to it or overwrite its calibre_id.
+func TestImporter_TitleMatchDoesNotStealExistingCalibreID(t *testing.T) {
+	imp, fr, authorRepo, bookRepo, _, _, _ := newImporterFixture(t)
+	ctx := context.Background()
+
+	author := &models.Author{ForeignID: "abs:author:1", Name: "Brandon Sanderson", SortName: "Sanderson, Brandon", Monitored: true, MetadataProvider: "calibre"}
+	if err := authorRepo.Create(ctx, author); err != nil {
+		t.Fatal(err)
+	}
+	other := &models.Book{
+		ForeignID: "calibre:book:2", AuthorID: author.ID, Title: "Mistborn: Secret History", SortTitle: "Mistborn: Secret History",
+		Status: models.BookStatusImported, Genres: []string{}, MetadataProvider: "calibre",
+		MediaType: models.MediaTypeEbook, Monitored: true,
+	}
+	if err := bookRepo.Create(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := bookRepo.SetCalibreID(ctx, other.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	fr.books = []CalibreBook{sampleCalibreBook(1, "Mistborn", "Brandon Sanderson")}
+	if _, err := imp.Run(ctx, "/lib"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	still, err := bookRepo.GetByCalibreID(ctx, 2)
+	if err != nil || still == nil || still.ID != other.ID {
+		t.Fatalf("calibre_id 2 no longer on its own book: %v / %+v", err, still)
+	}
+	mine, err := bookRepo.GetByCalibreID(ctx, 1)
+	if err != nil || mine == nil {
+		t.Fatalf("calibre_id 1 not bound: %v / %v", err, mine)
+	}
+	if mine.ID == other.ID {
+		t.Fatalf("Calibre book 1 was bound to the other work (id %d)", other.ID)
+	}
+}

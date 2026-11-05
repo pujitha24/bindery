@@ -910,7 +910,11 @@ func (i *Importer) upsertBook(ctx context.Context, runID int64, author *models.A
 	// match and produced duplicate rows (#940).
 	if existing, err := i.books.FindByAuthorAndDedupKey(ctx, author.ID, cb.Title); err != nil {
 		return nil, false, err
-	} else if existing != nil {
+	} else if existing != nil && existing.CalibreID == nil {
+		// A book that already carries a calibre_id belongs to a different
+		// Calibre record (path 1 found none for this id), so it is a distinct
+		// work whose title merely folds to the same key. Fall through and create
+		// a fresh row rather than steal its files and overwrite its calibre_id.
 		i.recordBookBeforeSnapshot(ctx, runID, externalID, existing, outcomeLinked, map[string]any{"matchedBy": "title"})
 		if err := i.books.SetCalibreID(ctx, existing.ID, cb.CalibreID); err != nil {
 			return nil, false, err
