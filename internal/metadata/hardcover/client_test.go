@@ -3209,3 +3209,16 @@ func TestGetBook_MarksGenresAndLanguageUnknown(t *testing.T) {
 		t.Errorf("UnknownFields = %v", book.UnknownFields)
 	}
 }
+
+func TestToBook_ExactReleaseDate(t *testing.T) {
+	c := New()
+	year := 2026
+	b := c.toBook(hcBook{ID: 1, Title: "Monsters of Ohio", Slug: "monsters-of-ohio-2026", ReleaseDate: "2026-11-03", ReleaseYear: &year})
+	if b.ReleaseDate == nil || b.ReleaseDate.Format("2006-01-02") != "2026-11-03" {
+		t.Errorf("ReleaseDate = %v, want 2026-11-03", b.ReleaseDate)
+	}
+	b = c.toBook(hcBook{ID: 2, Title: "Year Only", Slug: "year-only", ReleaseYear: &year})
+	if b.ReleaseDate == nil || b.ReleaseDate.Format("2006-01-02") != "2026-01-01" {
+		t.Errorf("year-only ReleaseDate = %v, want 2026-01-01", b.ReleaseDate)
+	}
+}
